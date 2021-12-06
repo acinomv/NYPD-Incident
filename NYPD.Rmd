@@ -1,0 +1,256 @@
+---
+title: "NYPD Incident Assignment"
+date: "11/22/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+### 1. Introduction
+
+The purpose of this project is to look at what predictors actually effect the rate of shooting incidents that are associated with murders. I will be using a data set of shooting incidents in New York City provided by the New York Police Department.
+
+### 2. Libraries
+```{r libs}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+```
+
+### 3. Importing Data
+I pull the .csv data from Data.gov and read it into R.
+```{r get_nypd_data}
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv"
+nypd <- read_csv(url)
+```
+
+### 4. Cleaning Data
+First, I remove the columns that will not be used in the analysis. They are: INCIDENT_KEY, LOCATION_DESC, Latitude, Longitude, Lon_Lat, X_COORD_CD, Y_COORD_CD and PRECINCT.
+
+I will then check which columns have NA.
+```{r tidy_nypd_data}
+nypd <- nypd %>%
+  select(-c(INCIDENT_KEY, LOCATION_DESC, Latitude, Longitude, Lon_Lat, 
+            X_COORD_CD, Y_COORD_CD, PRECINCT))
+```
+
+```{r check_na}
+colSums(is.na(nypd))
+```
+
+There is not too many missing data except in the columns related to perpetrators, namely PERP_AGE_GROUP, PERP_SEX, PERP_RACE. In each of these three columns, a sizable amount of this data is missing. This could possibly be due to a perpetrator not even being identified at all in the case. Since this is a dataset of shootings that occurred, it is possible that victims could not clearly identify their aggressor, or that someone heard and reported a gunshot, but never saw the shooter. It would be unwise to remove these NA values, so I will treat them as "Unknown", rather than NA. Since the number of NA's is small in JURISDICTION_CODE, I will remove those rows.
+
+```{r remove_na}
+nypd <- nypd %>%
+  replace_na(list(PERP_AGE_GROUP = "U", 
+               PERP_SEX = "U",
+               PERP_RACE = "U")) %>%
+  mutate_all(funs(str_replace(., "UNKNOWN", "U"))) %>%
+  na.omit()
+
+colSums(is.na(nypd))
+```
+
+By checking the summary of the data, we can check if the datatypes are appropriate.
+
+```{r type_check}
+summary(nypd)
+```
+
+The following columns should be treated as a factor: **BORO, PRECINCT, JURISDICTION_CODE, PERP_AGE_GROUP, PERP_SEX, PERP_RACE, VIC_AGE_GROUP, VIC_SEX, VIC_RACE**. I will also read in the date correctly.
+
+I also see that there are outliers in the **PERP_AGE_GROUP** category, with ages of 224, 940, and 1020. These numbers do not make sense, so I remove them and refactor that predictor.
+
+```{r type_change}
+
+nypd <- nypd %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE)) %>%
+  mutate_if(is.character, as.factor) %>%
+  mutate_if(is.double, as.factor)
+  
+
+summary(nypd)
+
+summary(nypd$PERP_AGE_GROUP)
+
+nypd <- subset(nypd, PERP_AGE_GROUP != "224" & PERP_AGE_GROUP != "940" &
+                 PERP_AGE_GROUP != "1020")
+
+nypd$PERP_AGE_GROUP <- factor(nypd$PERP_AGE_GROUP)
+  
+```
+
+I want to see if shootings happen around a specific day or hour, so I create a column that stores the name of the day based on **OCCUR_DATE**, and another column that stores the hour based on **OCCUR_TIME**.
+
+```{r day_time}
+
+nypd <- nypd %>%
+  mutate(DAY = wday(nypd$OCCUR_DATE, label = TRUE)) %>%
+  mutate(HOUR = hour(hms(as.character(nypd$OCCUR_TIME))))
+  
+
+```
+
+
+In my final dataset, I remove the original **OCCUR_DATE** and **OCCUR_TIME** columns since I only want to look at **DAY** and **HOUR**.
+
+```{r final_data}
+nypd_clean <- nypd %>%
+  select(-c(OCCUR_DATE, OCCUR_TIME))
+
+murders_true <- subset(nypd_clean, STATISTICAL_MURDER_FLAG == TRUE)
+murdres_false <- subset(nypd_clean, STATISTICAL_MURDER_FLAG == FALSE)
+```
+
+
+### 5. Visualizing
+
+Below are some bar plots to see how certain factors relate to the number of shooting incidents.
+
+```{r plot_borough}
+#plotting incidents in each borough
+ggplot(nypd_clean, aes(x = BORO)) +
+  geom_bar() +
+  labs(title = "Incidents per NYC Borough",
+       x = "Borough",
+       y = "Number of Incidents")
+```
+
+By plotting the number of incidents in each borough, we see that Brooklyn has the most shooting incidents, while Staten Island has the least.
+
+```{r plot_day}
+#plotting by day
+ggplot(nypd_clean, aes(x = DAY)) +
+  geom_bar() +
+  labs(title = "Incidents by Day of the Week",
+       x = "Day",
+       y = "Number of Incidents")
+```
+
+We see that most shooting incidents occur on the weekend, rather than the weekdays.
+
+```{r plot_age}
+#plotting by age groups
+ggplot(nypd_clean, aes(x = VIC_AGE_GROUP)) +
+  geom_bar() +
+  labs(title = "Incidents by Victim Age",
+       x = "Age",
+       y = "Number of Incidents")
+       
+ggplot(nypd_clean, aes(x = PERP_AGE_GROUP)) +
+  geom_bar() +
+  labs(title = "Incidents by Perpetrator Age",
+       x = "Age",
+       y = "Number of Incidents")
+```
+
+Most of the victims are under 45 years of age, while the age of most perpetrators is unknown.
+
+```{r plot_race}
+#plotting by race
+ggplot(nypd_clean, aes(x = PERP_RACE)) +
+  geom_bar() +
+  labs(title = "Incidents by Perpetrator Race",
+       x = "Race",
+       y = "Number of Incidents") +
+  theme(axis.text.x = element_text(angle = 20, size = 5))
+```
+
+By plotting incidents per race, we can see that out of the known perpetrators, the most incidents had a black perpetrator. However, one cannot ignore the fact that there's just as many unknown perpetrators.
+
+```{r plot_sex}
+#plotting by sex
+ggplot(nypd_clean, aes(x = VIC_SEX)) +
+  geom_bar() +
+  labs(title = "Incidents by Victim Sex",
+       x = "Sex",
+       y = "Number of Incidents")
+
+ggplot(nypd_clean, aes(x = PERP_SEX)) +
+  geom_bar() +
+  labs(title = "Incidents by Perpetrator Sex",
+       x = "Sex",
+       y = "Number of Incidents")
+```
+
+Most of the victims are male, while most of the perpetrators are either male or unknown.
+
+```{r plot_jurisdiction}
+ggplot(nypd_clean, aes(x = JURISDICTION_CODE)) +
+  geom_bar() +
+  labs(title = "Incidents by Jurisdiction",
+       x = "JURISDICTION_CODE",
+       y = "Jurisdiction Code")
+```
+
+Overall, there is a large chunk of unknown data especially when it comes to perpetrator data. It would be interesting to see if these unknown perpetrators skews the results in any way.
+
+### 6. Modeling
+
+I use a Logistic Regression model to predict the probability of a murder associated with the shooting incident based on the different predictors.
+
+Below is the result of running this model. The estimated coefficients of predictors in a logistic regression are associated with the expected change in natural log of odds that a murder is associated with a shooting incident. The predictors in this model are categorical. Therefore, this means that going from one level of a predictor factor to the next, changes the natural log odds by $e^{Estimate}$.
+
+
+```{r modeling_murder}
+
+mod.glm <- glm(STATISTICAL_MURDER_FLAG ~ ., data = nypd_clean, family = "binomial")
+summary(mod.glm)
+
+nypd_results <- nypd_clean %>%
+  mutate(PREDICTED_PROB = predict(mod.glm, type = "response"))
+
+murder_true_prob = sum(nypd_clean$STATISTICAL_MURDER_FLAG == TRUE) / nrow(nypd_clean)
+murder_true_prob
+  
+```
+
+We also calculate the true probability of a murder associated with a shooting, which is 0.19.
+
+According to this logistical regression, the significant predictors are  **BOROBROOKLYN, JURISDICTION_CODE2, PERP_AGE_GROUP25-45, PERP_AGE_GROUP45-64, PERP_AGE_GROUP64+, PERP_AGE_GROUPU, PERP_SEXU, VIC_AGE_GROUP18-24, VIC_AGE_GROUP25-44, VIC_AGE_GROUP45-64, VIC_AGE_GROUP65+, VIC_AGE_GROUPU** and  **DAY.Q**.
+
+Below are box plots that show the predicted probabilities of a murder related shooting incident for the significant predictors. They show how each predictor predicts the likelihood of a murder.
+
+
+```{r model_visualize}
+
+ggplot(nypd_results, aes(x = BORO, y = PREDICTED_PROB)) +
+  geom_boxplot(aes(fill = BORO)) +
+  geom_hline(yintercept = murder_true_prob, linetype = "dashed", color = "red")
+
+ggplot(nypd_results, aes(x = JURISDICTION_CODE, y = PREDICTED_PROB)) +
+  geom_boxplot(aes(fill = JURISDICTION_CODE)) +
+  geom_hline(yintercept = murder_true_prob, linetype = "dashed", color = "red")
+
+ggplot(nypd_results, aes(x = PERP_AGE_GROUP, y = PREDICTED_PROB)) +
+  geom_boxplot(aes(fill = PERP_AGE_GROUP)) +
+  geom_hline(yintercept = murder_true_prob, linetype = "dashed", color = "red")
+
+ggplot(nypd_results, aes(x = VIC_AGE_GROUP, y = PREDICTED_PROB)) +
+  geom_boxplot(aes(fill = VIC_AGE_GROUP)) +
+  geom_hline(yintercept = murder_true_prob, linetype = "dashed", color = "red")
+
+ggplot(nypd_results, aes(x = PERP_SEX, y = PREDICTED_PROB)) +
+  geom_boxplot(aes(x = PERP_SEX)) +
+  geom_hline(yintercept = murder_true_prob, linetype = "dashed", color = "red")
+
+ggplot(nypd_results, aes(x = DAY, y = PREDICTED_PROB)) +
+  geom_boxplot(aes(fill = DAY)) +
+  geom_hline(yintercept = murder_true_prob, linetype = "dashed", color = "red")
+
+
+ggplot(nypd_results, aes(x = DAY, y = PREDICTED_PROB)) +
+  geom_smooth(aes(x = unclass(DAY)),
+              formula = y ~ poly(x, 2),
+              method = lm, se = FALSE) +
+  geom_hline(yintercept = murder_true_prob, linetype = "dashed", color = "red")
+
+```
+
+
+
+### 7. Conclusion and Bias Discussion
+The topic of this project shows how bias may affect the results, especially in determining what predictors may be more useful when determining the probability of murder related shootings. New York City is highly portrayed in media and is very diverse. The city has somewhat of a reputation of being inhabited by rude people, hard workers, or even criminals like the Mafia, to name a few examples of stereotypes. Having visited New York City myself, and have seen New York City portrayed in various TV shows and movies, I have my own preconceptions about shootings in New York City. I thought perpetrator race would have played a significant role in estimating probability. I also thought that the the Bronx would have been a significant factor, given that the media always portrays the Bronx as a dangerous place. These biases were quickly dispelled once I made bar plots for PERP_RACE and BORO and ran the regression and saw what really factors into the probability of a murder related shooting. 
+
+With the bar plots, I noticed almost equal amounts of shooting incidents where the perpetrator's race was black and unknown. The unknown data is possibly due to a perpetrator not being identified or arrested. Since there is a good amount of unknown race data, it makes sense that the perpetrator's race does not come out as significant in the regression. Another bar plot showed that more shooting incidents occurred in Brooklyn, compared to my initial assumption of the Bronx.
+
+If I had gone with my initial preconceptions, my estimates would have been far off. Additionally, if a model made with my preconceptions was used to impact things like public policy or police staffing, it would have incorrectly portrayed the Bronx and black individuals in the wrong light, when those variables should not even be factored in. When utilizing data, one must also consider bias that comes with data collection itself. These shooting incidents are from real police encounters, and there may be systemic bias with how police respond to such incidents. Perpetrator identification can also be heavily based on witness or victim account, and the victim's own personal bias therefore also affects this data set. This shows that one must always verify with the data before making any assumptions, and that the context in which data is collected must be kept in mind. 
